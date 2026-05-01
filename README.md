@@ -1,25 +1,17 @@
-TLDR: Just run on the terminal --> 
-- Main operator w/ Xbox controller = python3 pepper_xbox_operator.py --ip 192.168.0.100
-- If LT/RT are noisy: python3 pepper_xbox_operator.py --ip 192.168.0.100 --disable-triggers
-A = Hold in air pose and squeeze once
-V = Free + open hand
-B = Small squish
-Y = Hard squish
-LB = Intro speech
-LT = (trigger axis press) = between-rounds speech (+ free+open) (disabled if --disable-triggers)
-RT = (trigger axis press) = last-round-ended speech (+ free+open) (disabled if --disable-triggers)
-RB = 5s celebration dance, then return to StandInit, then says “Did you like that dance?”
-Start = Quit
+TLDR (RIGHT arm)
+- Xbox controller operator: `python3 pepper_xbox_operator.py --ip 192.168.0.100`
 
+Buttons / triggers (defaults, can be changed with `--a-button N`, `--rt-axis N`, etc):
+- `A`: lock current RIGHT arm pose + squeeze once
+- `B`: free + open hand
+- `X`: small squish
+- `Y`: hard squish (max safe)
+- `RT` (trigger): autoplace RIGHT arm onto the table (elbow bends first) + lock
+- `RB`: slow dance (safe, low speed)
+- `START`: quit
 
-
-- Manual hotkeys (keyboard, no ROS): python3 pepper_manual_hotkey.py --ip 192.168.0.100
-0 = Free Hand: Open hand + set stfiff to free
-5 = Lock Mod; Set sarm stiffness to olock
-0 = Open hand only 
-x = Small squish
-y = large squish
-q = quit 
+- Manual hotkeys (keyboard): `python3 pepper_manual_hotkey.py --ip 192.168.0.100`
+  - `5` lock (+ squeeze), `0` free, `o` open, `q` quit
 
 
 

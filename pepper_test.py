@@ -17,12 +17,12 @@ from contextlib import redirect_stderr
 CSV_TEST_PATH = "squish_log_test.csv"
 
 DEFAULT_ARM_ANGLES = {
-    "LShoulderPitch": 0.60,
-    "LShoulderRoll": 0.20,
-    "LElbowYaw": -1.10,
-    "LElbowRoll": -0.60,
+    "RShoulderPitch": 0.60,
+    "RShoulderRoll": -0.20,
+    "RElbowYaw": 1.10,
+    "RElbowRoll": 0.60,
     # 90 degrees (pi/2) wrist yaw
-    "LWristYaw": 1.5708,
+    "RWristYaw": 1.5708,
 }
 
 REST_ARM_ANGLES = dict(DEFAULT_ARM_ANGLES)
@@ -151,22 +151,22 @@ def _compute_safe_fraction(motion, joint_names):
 
 
 def _open_hand(motion, speed_fraction):
-    """Open LHand fully."""
+    """Open RHand fully."""
     sf = max(0.01, min(1.0, float(speed_fraction)))
-    _nao_try("ALMotion.setAngles(LHand=0.0)", motion.setAngles, ["LHand"], [0.0], sf)
+    _nao_try("ALMotion.setAngles(RHand=0.0)", motion.setAngles, ["RHand"], [0.0], sf)
 
 
-def _move_left_arm(motion, arm_angles):
-    """Move left arm joints to target angles after opening hand (safety rule)."""
+def _move_right_arm(motion, arm_angles):
+    """Move right arm joints to target angles after opening hand (safety rule)."""
     joint_names = list(arm_angles.keys())
     target = [float(arm_angles[j]) for j in joint_names]
     safe_fraction = _compute_safe_fraction(motion, joint_names)
     _open_hand(motion, speed_fraction=safe_fraction)
-    _nao_try("ALMotion.setAngles(LArm joints)", motion.setAngles, joint_names, target, safe_fraction)
+    _nao_try("ALMotion.setAngles(RArm joints)", motion.setAngles, joint_names, target, safe_fraction)
 
 
 def _execute_squish(motion, squish_type):
-    """Execute a squish profile on LHand (close-hold-open) with safety clamping."""
+    """Execute a squish profile on RHand (close-hold-open) with safety clamping."""
     profile = SQUISH_PROFILES[squish_type]
     close = float(profile["close"])
     hold_s = float(profile["hold_s"])
@@ -177,14 +177,14 @@ def _execute_squish(motion, squish_type):
 
     speed_fraction = max(0.01, min(1.0, speed))
 
-    _nao_try("ALMotion.setAngles(LHand close)", motion.setAngles, ["LHand"], [close], speed_fraction)
+    _nao_try("ALMotion.setAngles(RHand close)", motion.setAngles, ["RHand"], [close], speed_fraction)
     time.sleep(hold_s)
     try:
-        current = _nao_try("ALMotion.getAngles(LHand)", motion.getAngles, ["LHand"], True)[0]
-        print("LHand during hold: %.3f" % float(current))
+        current = _nao_try("ALMotion.getAngles(RHand)", motion.getAngles, ["RHand"], True)[0]
+        print("RHand during hold: %.3f" % float(current))
     except Exception:
         pass
-    _nao_try("ALMotion.setAngles(LHand open)", motion.setAngles, ["LHand"], [0.0], speed_fraction)
+    _nao_try("ALMotion.setAngles(RHand open)", motion.setAngles, ["RHand"], [0.0], speed_fraction)
 
     return close, hold_s
 
@@ -234,11 +234,11 @@ def main():
 
     try:
         _pause_if_enabled(args.pause, "Ready to move to DEFAULT_ARM_ANGLES. Press ENTER...")
-        _move_left_arm(motion, DEFAULT_ARM_ANGLES)
+        _move_right_arm(motion, DEFAULT_ARM_ANGLES)
         try:
             joint_names = list(DEFAULT_ARM_ANGLES.keys())
-            actual = _nao_try("ALMotion.getAngles(LArm)", motion.getAngles, joint_names, True)
-            print("Actual left-arm angles:")
+            actual = _nao_try("ALMotion.getAngles(RArm)", motion.getAngles, joint_names, True)
+            print("Actual right-arm angles:")
             for name, val in zip(joint_names, actual):
                 print("  %s: %.3f" % (name, float(val)))
         except Exception:
@@ -258,7 +258,7 @@ def main():
         time.sleep(0.2)
 
         _open_hand(motion, speed_fraction=0.1)
-        _move_left_arm(motion, REST_ARM_ANGLES)
+        _move_right_arm(motion, REST_ARM_ANGLES)
         success = True
     finally:
         try:

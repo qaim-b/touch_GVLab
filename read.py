@@ -17,12 +17,12 @@ from contextlib import redirect_stderr
 PORT = 9559
 
 # Joints relevant for Touch tuning (radians). Add/remove if needed.
-LEFT_ARM_JOINTS = [
-    "LShoulderPitch",
-    "LShoulderRoll",
-    "LElbowYaw",
-    "LElbowRoll",
-    "LWristYaw",
+RIGHT_ARM_JOINTS = [
+    "RShoulderPitch",
+    "RShoulderRoll",
+    "RElbowYaw",
+    "RElbowRoll",
+    "RWristYaw",
 ]
 
 OPTIONAL_STILLNESS_JOINTS = [
@@ -30,7 +30,7 @@ OPTIONAL_STILLNESS_JOINTS = [
     "HeadPitch",
 ]
 
-HAND_JOINTS = ["LHand"]
+HAND_JOINTS = ["RHand"]
 
 
 def _parse_args():
@@ -86,7 +86,7 @@ def _connect_naoqi(ip, port):
 def _dict_block_from_angles(angles_by_name):
     """Render a copy/paste-ready DEFAULT_ARM_ANGLES dict block (radians)."""
     lines = ["DEFAULT_ARM_ANGLES = {"]  # matches our other scripts
-    for k in LEFT_ARM_JOINTS:
+    for k in RIGHT_ARM_JOINTS:
         lines.append('    "%s": %.6f,' % (k, float(angles_by_name[k])))
     lines.append("}")
     return "\n".join(lines) + "\n"
@@ -113,7 +113,7 @@ def main():
     get_service = _connect_naoqi(args.ip, args.port)
     motion = get_service("ALMotion")
 
-    names = list(LEFT_ARM_JOINTS)
+    names = list(RIGHT_ARM_JOINTS)
     if args.include_head:
         names += OPTIONAL_STILLNESS_JOINTS
     if args.include_hand:
@@ -134,7 +134,7 @@ def main():
             print("  %s: %.1f deg" % (n, math.degrees(float(a))))
 
     # Copy/paste-ready dict for pepper_touch_node.py / pepper_test.py
-    arm_only = dict(zip(LEFT_ARM_JOINTS, angles[: len(LEFT_ARM_JOINTS)]))
+    arm_only = dict(zip(RIGHT_ARM_JOINTS, angles[: len(RIGHT_ARM_JOINTS)]))
     dict_block = _dict_block_from_angles(arm_only)
     print("\nCopy/paste into DEFAULT_ARM_ANGLES (radians):")
     print(dict_block.rstrip())

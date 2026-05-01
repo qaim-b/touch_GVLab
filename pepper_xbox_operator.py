@@ -31,7 +31,7 @@ import threading
 PORT = 9559
 JOYSTICK_DEV = "/dev/input/js0"
 
-# Left arm stiffness control
+# Arm joint sets (Pepper)
 LEFT_ARM_JOINTS = [
     "LShoulderPitch",
     "LShoulderRoll",
@@ -42,18 +42,27 @@ LEFT_ARM_JOINTS = [
 LEFT_HAND = "LHand"
 LEFT_WRIST = "LWristYaw"
 
+RIGHT_ARM_JOINTS = [
+    "RShoulderPitch",
+    "RShoulderRoll",
+    "RElbowYaw",
+    "RElbowRoll",
+    "RWristYaw",
+]
+RIGHT_HAND = "RHand"
+RIGHT_WRIST = "RWristYaw"
+
 STIFFNESS_FREE = 0.0
 STIFFNESS_LOCK = 1.0
 STIFFNESS_RAMP_S = 0.5
 STIFFNESS_LOCK_LWRISTYAW = 1.0
-# IMPORTANT: In FREE mode the participant should be able to reposition the wrist by hand.
-# Keeping this at 1.0 causes the wrist controller to fight the human and "snap back".
-STIFFNESS_FREE_LWRISTYAW = 0.0
+# Wrist should not move at all (hold current angle).
+STIFFNESS_FREE_LWRISTYAW = 1.0
 
 # "Float/hold" stiffness: enough to keep the arm up in the air while still feeling safe.
 # This is what you want after the participant positions the arm.
 STIFFNESS_HOLD = 0.7
-STIFFNESS_HOLD_LWRISTYAW = 0.0
+STIFFNESS_HOLD_LWRISTYAW = 1.0
 
 # Re-send current arm pose to help it hold position after changing stiffness.
 HOLD_POSE_SPEED_FRACTION = 0.05
@@ -61,7 +70,21 @@ HOLD_POSE_SPEED_FRACTION = 0.05
 # Wrist holding: keep LWristYaw at a fixed angle for the whole session.
 WRIST_HOLD_PERIOD_S = 0.2
 WRIST_HOLD_SPEED_FRACTION = 0.08
-WRIST_HOLD_ENABLED = False
+WRIST_HOLD_ENABLED = True
+
+# RT auto-placement (right arm) - tune on hardware
+RT_AUTOPLACE_ENABLED = True
+RT_AUTOPLACE_SPEED_FRACTION = 0.18
+RT_AUTOPLACE_ELBOW_CONTRACT = 1.30  # radians (bent first to avoid table collision)
+
+# Table rest pose (right arm) - tune these
+RIGHT_TABLE_POSE_ANGLES = {
+    "RShoulderPitch": 0.80,
+    "RShoulderRoll": -0.25,
+    "RElbowYaw": 1.10,
+    "RElbowRoll": 0.60,
+    "RWristYaw": 1.57,
+}
 
 # Safety
 SAFETY_HAND_MAX = 0.40
@@ -217,7 +240,7 @@ def _set_lock_stiffness(motion, arm_joints, hand_joint, wrist_joint):
     )
 
 def _set_hold_stiffness(motion, arm_joints, hand_joint, wrist_joint):
-    """Hold stiffness (keeps arm up, but doesn't fight wrist yaw)."""
+    """Hold stiffness (keeps arm up)."""
     names = list(arm_joints) + [hand_joint]
     stiffnesses = []
     for n in names:
@@ -257,7 +280,7 @@ def _hold_current_arm_pose(motion, arm_joints):
     names = list(arm_joints)
     angles = _nao_try("ALMotion.getAngles(Arm)", motion.getAngles, names, True)
     _nao_try(
-        "ALMotion.setAngles(LArm hold)",
+        "ALMotion.setAngles(Arm hold)",
         motion.setAngles,
         names,
         angles,
@@ -302,6 +325,32 @@ def _hold_wrist_yaw(motion, wrist_joint, wrist_angle_rad):
         [wrist_joint],
         [float(wrist_angle_rad)],
         float(WRIST_HOLD_SPEED_FRACTION),
+    )
+
+
+def _autoplace_right_arm_to_table(motion):
+    """Move right arm onto the table safely (contract elbow first), then lock + hold pose."""
+    if not RT_AUTOPLACE_ENABLED:
+        return
+    _wake_up(motion)
+    # Step 1: contract elbow to lift hand above the table plane
+    _nao_try(
+        "ALMotion.setAngles(RElbowRoll contract)",
+        motion.setAngles,
+        ["RElbowRoll"],
+        [float(RT_AUTOPLACE_ELBOW_CONTRACT)],
+        float(RT_AUTOPLACE_SPEED_FRACTION),
+    )
+    time.sleep(0.6)
+    # Step 2: move to table pose
+    names = list(RIGHT_TABLE_POSE_ANGLES.keys())
+    targets = [float(RIGHT_TABLE_POSE_ANGLES[n]) for n in names]
+    _nao_try(
+        "ALMotion.setAngles(RIGHT_TABLE_POSE_ANGLES)",
+        motion.setAngles,
+        names,
+        targets,
+        float(RT_AUTOPLACE_SPEED_FRACTION),
     )
 
 
@@ -370,66 +419,50 @@ def _print_hand(motion, hand_joint, label):
         pass
 
 
-def _celebration_dance(motion, duration_s):
-    """Chaotic 5s celebration dance using all available joints (best-effort, limit-clamped)."""
-    try:
-        names = list(_nao_try("ALMotion.getBodyNames(Body)", motion.getBodyNames, "Body"))
-    except Exception:
-        names = []
+def _celebration_dance(motion, duration_s, arm_joints, speed_fraction):
+    """Slow, low-amplitude dance using only the selected arm joints."""
+    names = list(arm_joints)
     if not names:
         return
 
-    # Avoid wheels if present.
-    names = [n for n in names if "Wheel" not in n]
-
-    # Ensure stiffness so joints actually move.
     try:
-        _nao_try("ALMotion.stiffnessInterpolation(Body,1.0)", motion.stiffnessInterpolation, names, 1.0, 0.3)
+        base = _nao_try("ALMotion.getAngles(dance base)", motion.getAngles, names, True)
     except Exception:
-        pass
+        base = [0.0 for _ in names]
 
-    limits_by_joint = {}
+    limits = {}
     for j in names:
         try:
             lim = _nao_try("ALMotion.getLimits(%s)" % j, motion.getLimits, j)
-            # lim[0] = [min, max, maxVel, maxTorq] (Pepper/NAOqi convention)
-            jmin = float(lim[0][0])
-            jmax = float(lim[0][1])
-            limits_by_joint[j] = (jmin, jmax)
+            limits[j] = (float(lim[0][0]), float(lim[0][1]))
         except Exception:
-            # Fallback: hands are usually 0..1; others unknown -> skip by giving 0..0.
-            if j.endswith("Hand"):
-                limits_by_joint[j] = (0.0, 1.0)
-            else:
-                limits_by_joint[j] = (0.0, 0.0)
+            limits[j] = (-3.14, 3.14)
+
+    sp = max(0.05, min(0.35, float(speed_fraction)))
+    dt = 0.20
+    amp = 0.18  # radians
 
     start = time.time()
-    dt = 0.05
-    base_speed = max(0.05, min(1.0, float(SAFETY_DANCE_SPEED_FRACTION)))
-
-    # Deterministic "chaos": per-joint frequency/phase based on index.
     while (time.time() - start) < float(duration_s):
         t = time.time() - start
         targets = []
-        for idx, j in enumerate(names):
-            jmin, jmax = limits_by_joint.get(j, (0.0, 0.0))
-            if jmax <= jmin:
-                targets.append(0.0)
-                continue
-            mid = 0.5 * (jmin + jmax)
-            amp = 0.35 * (jmax - jmin)
-            freq = 1.5 + (idx % 7) * 0.6
-            phase = (idx * 1.7) % (2.0 * math.pi)
-            val = mid + amp * math.sin(2.0 * math.pi * freq * t + phase)
-            if val < jmin:
-                val = jmin
-            if val > jmax:
-                val = jmax
-            targets.append(float(val))
+        for j, b in zip(names, base):
+            v = float(b)
+            if "ShoulderRoll" in j:
+                v = float(b) + amp * math.sin(2.0 * math.pi * 0.20 * t)
+            elif "ElbowRoll" in j:
+                v = float(b) + 0.5 * amp * math.sin(2.0 * math.pi * 0.20 * t + 1.2)
+            elif "ShoulderPitch" in j:
+                v = float(b) + 0.5 * amp * math.sin(2.0 * math.pi * 0.12 * t + 0.5)
+            jmin, jmax = limits.get(j, (-3.14, 3.14))
+            if v < jmin:
+                v = jmin
+            if v > jmax:
+                v = jmax
+            targets.append(float(v))
         try:
-            _nao_try("ALMotion.setAngles(dance)", motion.setAngles, names, targets, base_speed)
+            _nao_try("ALMotion.setAngles(dance slow)", motion.setAngles, names, targets, sp)
         except Exception:
-            # Keep going best-effort.
             pass
         time.sleep(dt)
 
@@ -443,8 +476,8 @@ def _parse_args():
     p.add_argument(
         "--side",
         choices=["left", "right"],
-        default="left",
-        help="Which arm/hand to use (default: left)",
+        default="right",
+        help="Which arm/hand to use (default: right)",
     )
     # Convenience aliases (common typing mistakes)
     p.add_argument(
@@ -505,16 +538,16 @@ def main():
 
     # Side selection (left vs right).
     if args.side == "right":
-        arm_joints = ["RShoulderPitch", "RShoulderRoll", "RElbowYaw", "RElbowRoll", "RWristYaw"]
-        hand_joint = "RHand"
-        wrist_joint = "RWristYaw"
+        arm_joints = list(RIGHT_ARM_JOINTS)
+        hand_joint = RIGHT_HAND
+        wrist_joint = RIGHT_WRIST
     else:
         arm_joints = list(LEFT_ARM_JOINTS)
         hand_joint = LEFT_HAND
         wrist_joint = LEFT_WRIST
 
-    # Hold pose while locked (exclude wrist to avoid "snapback" surprises).
-    hold_joints = [j for j in arm_joints if not j.endswith("WristYaw")]
+    # Hold pose while locked (include wrist so the wrist angle never changes).
+    hold_joints = list(arm_joints)
     stiffness_debug_joints = list(hold_joints) + [wrist_joint, hand_joint]
 
     wrist_stop = threading.Event()
@@ -549,14 +582,12 @@ def main():
 
     print("Opening joystick: %s" % args.dev)
     print("Mapping:")
-    print("  A: HOLD in-air pose + squeeze (can take 10–20s; be patient)")
+    print("  A: LOCK pose + squeeze (hard hold)")
     print("  B: free + open (can take 10–20s; be patient)")
     print("  X: small squish")
     print("  Y: HARD squish (max safe)")
-    print("  LB: intro speech")
-    print("  LT: between-rounds speech (+ free+open)")
-    print("  RT: last-round-ended speech (+ free+open)")
-    print("  RB: 5s celebration dance")
+    print("  RT: autoplace right arm onto table + lock")
+    print("  RB: slow dance")
     print("  START: quit")
     print("Begin pressing controller buttons now...")
     _set_free_stiffness(motion, arm_joints, hand_joint, wrist_joint)
@@ -566,12 +597,11 @@ def main():
         nonlocal lock_hold_stop, lock_hold_thread
         print("%s: LOCK + squeeze" % source)
         _wake_up(motion)
-        # Hold pose in the air: capture current participant-set posture and keep it.
-        # Use HOLD stiffness (not full lock) to avoid fighting the wrist and reduce snapback.
-        _set_hold_stiffness(motion, arm_joints, hand_joint, wrist_joint)
+        # Hard lock and hold the current pose.
+        _set_lock_stiffness(motion, arm_joints, hand_joint, wrist_joint)
         time.sleep(0.05)
-        _set_hold_stiffness(motion, arm_joints, hand_joint, wrist_joint)
-        _print_stiffness(motion, stiffness_debug_joints, "after HOLD")
+        _set_lock_stiffness(motion, arm_joints, hand_joint, wrist_joint)
+        _print_stiffness(motion, stiffness_debug_joints, "after LOCK")
         try:
             lock_hold_stop.set()
         except Exception:
@@ -580,7 +610,7 @@ def main():
         lock_hold_thread = _start_pose_hold_thread(motion, hold_joints, lock_hold_stop)
         if LOCK_SQUEEZE_VALUE > 0.0:
             _squish(motion, hand_joint, LOCK_SQUEEZE_VALUE, LOCK_SQUEEZE_SPEED, LOCK_SQUEEZE_HOLD_S)
-            _print_hand(motion, hand_joint, "after HOLD squeeze")
+            _print_hand(motion, hand_joint, "after LOCK squeeze")
 
     def _do_free():
         print("FREE + open")
@@ -601,32 +631,27 @@ def main():
         print("HARD squish")
         _squish(motion, hand_joint, SQUISH_HARD_CLOSE, SQUISH_HARD_SPEED, SQUISH_HARD_HOLD_S)
 
-    def _do_intro():
-        print("LB: intro")
-        if tts is not None:
-            _say(tts, SAY_INTRO)
-            time.sleep(float(INTRO_PAUSE_S))
-            _say(tts, "You ready to have some kicking fun? Let's get it!")
-
-    def _do_between_rounds():
-        print("LT: between rounds")
-        _do_free()
-        if tts is not None:
-            _say(tts, SAY_BETWEEN_ROUNDS)
-
-    def _do_last_round():
-        print("RT: last round ended")
-        _do_free()
-        if tts is not None:
-            _say(tts, SAY_LAST_ROUND)
-
-    def _do_dance():
-        print("RB: celebration dance (5s)")
+    def _do_rt_autoplace():
+        print("RT: autoplace right arm to table + lock")
+        if args.side != "right":
+            print("RT: run with --side right")
+            return
+        _wake_up(motion)
         try:
             lock_hold_stop.set()
         except Exception:
             pass
-        _celebration_dance(motion, duration_s=5.0)
+        _open_hand(motion, hand_joint)
+        _autoplace_right_arm_to_table(motion)
+        _do_lock_squeeze("RT")
+
+    def _do_dance():
+        print("RB: slow dance (8s)")
+        try:
+            lock_hold_stop.set()
+        except Exception:
+            pass
+        _celebration_dance(motion, duration_s=8.0, arm_joints=arm_joints, speed_fraction=0.18)
         # Return to a normal upright posture afterwards (best-effort).
         try:
             _open_hand(motion, hand_joint)
@@ -634,11 +659,9 @@ def main():
             pass
         try:
             if posture is not None:
-                _nao_try("ALRobotPosture.goToPosture(StandInit)", posture.goToPosture, "StandInit", 0.7)
+                _nao_try("ALRobotPosture.goToPosture(StandInit)", posture.goToPosture, "StandInit", 0.25)
         except Exception:
             pass
-        if tts is not None:
-            _say(tts, "Did you like that dance?")
 
     # Axis-trigger debouncing (LT/RT are often axes, not buttons).
     lt_active = False
@@ -665,13 +688,13 @@ def main():
                 if int(number) == int(args.lt_axis) and int(args.lt_axis) >= 0:
                     if (not lt_active) and v >= threshold:
                         lt_active = True
-                        _do_between_rounds()
+                        # LT unused
                     elif lt_active and v <= release_threshold:
                         lt_active = False
                 if int(number) == int(args.rt_axis) and int(args.rt_axis) >= 0:
                     if (not rt_active) and v >= threshold:
                         rt_active = True
-                        _do_last_round()
+                        _do_rt_autoplace()
                     elif rt_active and v <= release_threshold:
                         rt_active = False
                 continue
@@ -701,9 +724,6 @@ def main():
             if number == 3:
                 print("Y")
                 _do_hard()
-                continue
-            if int(number) == int(args.lb_button) and int(args.lb_button) >= 0:
-                _do_intro()
                 continue
             if int(number) == int(args.rb_button) and int(args.rb_button) >= 0:
                 _do_dance()
