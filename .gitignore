@@ -1,3 +1,4 @@
 .codex
 __pycache__/
 *.pyc
+PROGRESS_LOCAL.md

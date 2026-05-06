@@ -133,7 +133,7 @@ If an Xbox controller is connected to the Pepper-control laptop, you can operate
 
 Operator guide (what each input does):
 - `A`: HOLD in-air pose + squeeze once (can take **10–20s** to fully “settle” — be patient)
-- `B`: free stiffness + open hand (can take **10–20s** to fully “settle” — be patient)
+- `B`: open hand + FREE (if `--side right`, also returns the right arm back by reversing the RT table sequence)
 - `X`: small squish
 - `Y`: HARD squish (max safe)
 - `LB`: introduction speech (start-of-session)
@@ -144,6 +144,8 @@ Operator guide (what each input does):
 
 Optional:
 - Use right arm/hand for debugging: add `--side right` (or `--sideright`)
+- Right-arm table placement: run with `--side right`, then press `RT` to run the multi-step autoplace sequence (hand stays fully open; no squeeze).
+- If LT/RT triggers fire by themselves, run with `--disable-triggers` (you can still use A/B/X/Y/LB/RB/START).
 
 ## Troubleshooting (common)
 

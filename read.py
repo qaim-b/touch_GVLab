@@ -62,19 +62,27 @@ def _connect_naoqi(ip, port):
     try:
         with open(os.devnull, "w") as _devnull, redirect_stderr(_devnull):
             import qi  # type: ignore
-
-        # Create a qi.Application to avoid noisy qi.path warnings.
-        app = qi.Application(["read_angles", "--qi-url=tcp://%s:%d" % (ip, int(port))])
-        app.start()
-        session = app.session
-
-        def get_service(name):
-            return session.service(name)
-
-        return get_service
     except Exception:
-        pass
+        qi = None
 
+    if qi is not None:
+        try:
+            # Create a qi.Application to avoid noisy qi.path warnings.
+            app = qi.Application(["read_angles", "--qi-url=tcp://%s:%d" % (ip, int(port))])
+            app.start()
+            session = app.session
+
+            def get_service(name):
+                return session.service(name)
+
+            return get_service
+        except Exception as exc:
+            raise RuntimeError(
+                "Could not connect to Pepper NAOqi at %s:%d. Check IP/Wi-Fi and that port 9559 is open."
+                % (ip, int(port))
+            ) from exc
+
+    # Fallback only if qi is not installed.
     from naoqi import ALProxy  # type: ignore
 
     def get_service(name):
